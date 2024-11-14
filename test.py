@@ -90,7 +90,7 @@ class FlappyBird():
                 reward = -10
             else:
                 reward = 1
-        inputs = [self.bird_pos/self.height, self.data[0][0]/self.height if self.data else 0, self.data[0][1]/self.width if self.data else 0]
+        inputs = [self.bird_pos/self.height, [self.data[1][0] if self.data[0][1] <= 5 else self.data[0][0]]/self.height if self.data else 0, [self.data[1][1] if self.data[0][1] <= 5 else self.data[0][1]]/self.width if self.data else 0]
         self.bird_pos-=self.velocity
         if self.velocity > -2:
             self.velocity-=1
