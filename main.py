@@ -5,93 +5,119 @@ import time
 import os
 from tkinter import *
 import threading
-bird = FlappyBird()
+import pickle
 class Neuron:
     def __init__(self, weights):
         self.weights = weights
     def sigmoid(self, x):
+        if x > 50:
+            return 1.0
+        if x < -50:
+            return 0.0
         return 1/(1+math.exp(-x))
     def feedforward(self, inputs):
         weighted_sum = sum([inputs[i]*self.weights[i] for i in range(len(inputs))])
         output = self.sigmoid(weighted_sum)
         return(output)
 class NeuralNetwork:
-    def __init__(self, inputs, x, y):
+    def __init__(self, inputs, x, y, outputs):
         self.Q = []
-        self.epsilon = 1.5
+        self.epsilon = 1.0
         self.layer = []
-        for i in range(x):
+        self.layer.append([])
+        for i in range(inputs):
+            weights = []
+            for i in range(inputs):
+                weights.append(random.uniform(-1,1))
+            self.layer[0].append(Neuron(weights))
+        for i,amt in enumerate(y):
             self.layer.append([])
-            for j in range(y):
+            for j in range(amt):
                 weights = []
                 if i == 0:
                     for k in range(inputs):
                         weights.append(random.uniform(-1,1))
                 else:
-                    for k in range(y):
+                    for k in range(y[i-1]):
                         weights.append(random.uniform(-1,1))
-                self.layer[i].append(Neuron(weights))
-        self.learning_rate = 0.01
-    def update(self, state, action):
-        if (state, action) not in self.Q:
-            self.Q.append((state, action))
-    def feedforward(self, layer, inputs):
-        if layer == 0:
-            if random.random() < self.epsilon:
-                result = round(random.random())
-                self.epsilon = max(0.1, self.epsilon*0.995)
-            else:
-                result = round(self.layer[layer][0].feedforward(inputs) + random.uniform(-0.1, 0.1))
-            return [result]
-        if layer < len(self.layer):
-            result = self.feedforward(layer+1, [neuron.feedforward(inputs) for neuron in self.layer[layer]])
-            return result
+                self.layer[i+1].append(Neuron(weights))
+        self.layer.append([])
+        for i in range(outputs):
+            weights = []
+            for j in range(y[-1]):
+                weights.append(random.uniform(-1,1))
+            self.layer[-1].append(Neuron(weights))
+        self.learning_rate = 0.05
+    def save_weights(self, file_path="weights"):
+        weights = [[neuron.weights for neuron in layer] for layer in self.layer]
+        with open(file_path, 'wb') as file:
+            pickle.dump(weights, file)
+        print(f"Weights saved to {file_path}")
+    def load_weights(self, file_path="weights"):
+        with open(file_path, 'rb') as file:
+            weights = pickle.load(file)
+        for i, layer in enumerate(self.layer):
+            for j, neuron in enumerate(layer):
+                neuron.weights = weights[i][j]
+        print(f"Weights loaded from {file_path}")
+    def q_learning_update(self, state, action, reward, next_state, gamma=0.95):
+        q_values = self.feedforward(state)
+        next_q_values = self.feedforward(next_state)
+        target = reward+gamma*max(next_q_values)
+        error = target-q_values[0]
+        self.train([target if i == action else q_values[i] for i in range(len(q_values))], state)
+    def feedforward(self, inputs):
+        current_inputs = inputs
+        for layer in self.layer:
+            next_inputs = []
+            for neuron in layer:
+                next_inputs.append(neuron.feedforward(current_inputs))
+            current_inputs = next_inputs
+        return current_inputs
+    def choose_action(self, state):
+        if random.random() < self.epsilon:
+            return random.randint(0,1)
         else:
-            return inputs
+            q_values = self.feedforward(state)
+            return q_values.index(max(q_values))
     def calculate_mse(self, predictions, targets, r=0, p=0):
         n = len(predictions)
         mse = 1/n*sum([(predictions[i]-targets[i])**2-r+p for i in range(n)])
         return mse
-    def punish(self, inputs, reward):
-        os.system("clear")
-        predictions = self.feedforward(0, inputs)
-        if round(predictions[0]) == 1:
-            targets = [0]
-        else:
-            targets = [1]
-        self.update(inputs, targets)
-        for layer in range(len(self.layer)):
-            for neuron in range(len(self.layer[layer])):
-                for weight in range(len(self.layer[layer][neuron].weights)):
-                    self.layer[layer][neuron].weights[weight]-=self.learning_rate*(self.calculate_mse(predictions, targets, 0, -reward)/self.layer[layer][neuron].weights[weight])
-    def reward(self, inputs, reward):
-        if(reward > 5):
-            print("B")
-        predictions = self.feedforward(0, inputs)
-        targets = [round(predictions[0])]
-        self.update(inputs, targets)
-        for layer in range(len(self.layer)):
-            for neuron in range(len(self.layer[layer])):
-                for weight in range(len(self.layer[layer][neuron].weights)):
-                    self.layer[layer][neuron].weights[weight]-=self.learning_rate*(self.calculate_mse(predictions, targets, reward, 0)/self.layer[layer][neuron].weights[weight])
-    def calculate_gradient(self, x, y, z, inputs, targets):
-        predictions = self.feedforward(0,inputs)
-        old = self.calculate_mse(predictions,targets)
-        weight = self.layer[x][y].weights[z]
-        self.layer[x][y].weights[z] = weight+0.1
-        predictions = self.feedforward(0,inputs)
-        new = self.calculate_mse(predictions,targets)
-        gradient = (new-old)/0.001
-        weight -= self.learning_rate*gradient
-        self.layer[x][y].weights[z] = weight
+    def punish(self, state, action, penalty, next_state):
+        self.q_learning_update(state, action, penalty, next_state)
+    def reward(self, state, action, reward, next_state):
+        self.q_learning_update(state, action, reward, next_state)
+    def calculate_gradient(self, layer_index, neuron_index, weight_index, inputs, targets):
+        activations = [inputs]
+        current_inputs = inputs
+        for layer in self.layer:
+            layer_outputs = []
+            for neuron in layer:
+                layer_outputs.append(neuron.feedforward(current_inputs))
+            activations.append(layer_outputs)
+            current_inputs = layer_outputs
+        layer_deltas = [0] * len(self.layer)
+        for i in reversed(range(len(self.layer))):
+            layer_deltas[i] = []
+            for j, neuron in enumerate(self.layer[i]):
+                if i == len(self.layer)-1:
+                    error = activations[i+1][j]-targets[j]
+                else:
+                    error = sum(layer_deltas[i+1][k]*self.layer[i+1][k].weights[j] for k in range(len(self.layer[i+1])))
+                delta = error*neuron.sigmoid(activations[i+1][j])*(1-neuron.sigmoid(activations[i+1][j]))
+                layer_deltas[i].append(delta)
+        neuron = self.layer[layer_index][neuron_index]
+        gradient = layer_deltas[layer_index][neuron_index]*activations[layer_index][weight_index]
+        neuron.weights[weight_index]-=self.learning_rate*gradient
     def train(self, targets, inputs):
-        predictions = self.feedforward(0,inputs)
+        predictions = self.feedforward(inputs)
         mse = self.calculate_mse(predictions, targets)
         for i in range(len(self.layer)):
             for j in range(len(self.layer[i])):
                 for k in range(len(self.layer[i][j].weights)):
                     self.calculate_gradient(i,j,k,inputs,targets)
-        return(self.feedforward(0,inputs))
+        return(mse)
 """
 run_network = NeuralNetwork(5, 1, 1)
 
@@ -117,6 +143,5 @@ def run():
 run()
 """
 
-flap_network = NeuralNetwork(3,6,1)
-thread = threading.Thread(target=keyloop, args=[bird,flap_network])
-thread.start()
+flap_network = NeuralNetwork(3,3,[3,8,16,16],1)
+keyloop(flap_network)
